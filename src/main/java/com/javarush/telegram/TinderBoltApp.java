@@ -1,10 +1,12 @@
 package com.javarush.telegram;
 
 import org.telegram.telegrambots.meta.TelegramBotsApi;
+import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class TinderBoltApp extends MultiSessionTelegramBot {
@@ -14,6 +16,11 @@ public class TinderBoltApp extends MultiSessionTelegramBot {
 
     private ChatGPTService chatGPT = new ChatGPTService(OPEN_AI_TOKEN);
     private DialogMode currentMode = null;
+    private ArrayList<String> list = new ArrayList<>();
+    private UserInfo me;
+    private UserInfo she;
+    private int questionCount;
+
 
     public TinderBoltApp() {
         super(TELEGRAM_BOT_NAME, TELEGRAM_BOT_TOKEN);
@@ -22,9 +29,9 @@ public class TinderBoltApp extends MultiSessionTelegramBot {
     @Override
     public void onUpdateEventReceived(Update update) {
         //TODO: основной функционал бота будем писать здесь
-        String messageText = getMessageText();
+        String message = getMessageText();
 
-        switch (messageText) {
+        switch (message) {
             case "/start" -> {
                 currentMode = DialogMode.MAIN;
                 sendPhotoMessage("main");
@@ -44,29 +51,40 @@ public class TinderBoltApp extends MultiSessionTelegramBot {
                 sendPhotoMessage("profile");
                 String text = loadMessage("profile");
                 sendTextMessage(text);
+                me = new UserInfo();
+                questionCount = 1;
+                sendTextMessage("Сколько вам лет?");
+
+                return;
             }
             case "/opener" -> {
                 currentMode = DialogMode.OPENER;
                 sendPhotoMessage("opener");
                 String text = loadMessage("opener");
                 sendTextMessage(text);
+                she = new UserInfo();
+                questionCount = 1;
+                sendTextMessage("Имя девушки?");
                 return;
             }
             case "/message" -> {
                 currentMode = DialogMode.MESSAGE;
                 sendPhotoMessage("message");
                 String text = loadMessage("message");
-                sendTextMessage(text);
+                sendTextButtonsMessage(text, "Следующее сообщение", "message_next",
+                        "Пригласить на свидание", "message_date");
                 return;
             }
             case "/date" -> {
                 currentMode = DialogMode.DATE;
                 sendPhotoMessage("date");
                 String text = loadMessage("date");
-                sendTextMessage(text);
-                List<String> people = List.of("Ариана Гранде", "1", "Марго Робби", "2", "Зендея", "3",
-                        "Райан Гослинг", "4", "Том Харди", "5");
-                sendTextButtonsMessage("Выберите доступный профиль: ", people);
+                List<String> people = List.of("Ариана Гранде", "date_grande",
+                        "Марго Робби", "date_robbie",
+                        "Зендея", "date_zendaya",
+                        "Райан Гослинг", "date_gosling",
+                        "Том Харди", "date_hardy");
+                sendTextButtonsMessage(text, people);
                 return;
             }
             case "/gpt" -> {
@@ -81,33 +99,121 @@ public class TinderBoltApp extends MultiSessionTelegramBot {
                 return;
             }
             default -> {
-                if (messageText.contains("/")) {
-                    sendTextMessage("Команды *" + messageText + "* не существует.");
+                if (message.contains("/")) {
+                    sendTextMessage("Команды *" + message + "* не существует.");
                     return;
                 }
             }
         }
 
         switch (currentMode) {
-            case MAIN -> {
-                String prompt = loadPrompt("main");
-            }
             case PROFILE -> {
-                String prompt = loadPrompt("profile");
+                if (!isMessageCommand()) {
+                    switch (questionCount) {
+                        case 1:
+                            me.age = message;
+                            questionCount = 2;
+                            sendTextMessage("Кем вы работаете?");
+                            return;
+                        case 2:
+                            me.occupation = message;
+                            questionCount = 3;
+                            sendTextMessage("У вас есть хобби?");
+                            return;
+                        case 3:
+                            me.hobby = message;
+                            questionCount = 4;
+                            sendTextMessage("Что вам НЕ нравиться в людях?");
+                            return;
+                        case 4:
+                            me.annoys = message;
+                            questionCount = 5;
+                            sendTextMessage("Цель знакомства?");
+                            return;
+                        case 5:
+                            me.goals = message;
+                            String aboutMyself = me.toString();
+                            String prompt = loadPrompt("profile");
+                            Message msg = sendTextMessage("Подождите пару секунд - ChatGPT \uD83E\uDDE0 думает...");
+                            String answer = chatGPT.sendMessage(prompt, aboutMyself);
+                            updateTextMessage(msg, answer);
+                            return;
+                    }
+                }
             }
             case OPENER -> {
-                String prompt = loadPrompt("opener");
+                if (!isMessageCommand()) {
+                    switch (questionCount) {
+                        case 1:
+                            she.name = message;
+                            questionCount = 2;
+                            sendTextMessage("Сколько ей лет?");
+                            return;
+                        case 2:
+                            me.age = message;
+                            questionCount = 3;
+                            sendTextMessage("Есть ли у неё хобби и какие?");
+                            return;
+                        case 3:
+                            me.hobby = message;
+                            questionCount = 4;
+                            sendTextMessage("Кем она работает?");
+                            return;
+                        case 4:
+                            me.occupation = message;
+                            questionCount = 5;
+                            sendTextMessage("Цель знакомства?");
+                            return;
+                        case 5:
+                            me.goals = message;
+                            String aboutFriend = me.toString();
+                            String prompt = loadPrompt("opener");
+                            Message msg = sendTextMessage("Подождите пару секунд - ChatGPT \uD83E\uDDE0 думает...");
+                            String answer = chatGPT.sendMessage(prompt, aboutFriend);
+                            updateTextMessage(msg, answer);
+                            return;
+                    }
+                }
             }
             case MESSAGE -> {
-                String prompt = loadPrompt("message");
+                if (!isMessageCommand()) {
+                    String query = getCallbackQueryButtonKey();
+                    if (query.startsWith("message_")) {
+                        String prompt = loadPrompt(query);
+                        String userChatHistory = String.join("\n\n", list);
+                        Message msg = sendTextMessage("Подождите пару секунд - ChatGPT думает...");
+                        String answer = chatGPT.sendMessage(prompt, userChatHistory);
+                        updateTextMessage(msg, answer);
+                        return;
+                    }
+                }
+                list.add(message);
+                return;
             }
-//            case DATE -> {
-//                String prompt = loadPrompt("date");
-//            }
+            case DATE -> {
+                if (!isMessageCommand()) {
+                    String query = getCallbackQueryButtonKey();
+                    if (query.startsWith("date_")) {
+                        sendPhotoMessage(query);
+                        sendTextMessage("Отличный выбор");
+                        String prompt = loadPrompt(query);
+                        chatGPT.setPrompt(prompt);
+                        return;
+                    }
+                }
+                Message msg = sendTextMessage("Подождите пару секунд - ChatGPT думает...");
+                String answer = chatGPT.addMessage(message);
+                updateTextMessage(msg, answer);
+                return;
+            }
             case GPT -> {
-                String prompt = loadPrompt("gpt");
-                String answer = chatGPT.sendMessage(prompt, messageText);
-                sendTextMessage(answer);
+                if (!isMessageCommand()) {
+                    String prompt = loadPrompt("gpt");
+                    Message msg = sendTextMessage("Подождите пару секунд - ChatGPT думает...");
+                    String answer = chatGPT.sendMessage(prompt, message);
+                    updateTextMessage(msg, answer);
+                    return;
+                }
             }
         }
     }
